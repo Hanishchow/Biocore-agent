@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BioCore — Analysis Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Background grid -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <!-- ── Header ── -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⬡</span>
+        <div>
+          <span class="logo-name">BioCore</span>
+          <span class="logo-sub">Biochemistry Analysis Pipeline</span>
+        </div>
+      </div>
+      <div class="header-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-label" id="statusLabel">Ready</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main layout ── -->
+  <main class="layout">
+
+    <!-- LEFT PANEL: Form -->
+    <section class="panel panel-form" aria-label="Analysis inputs">
+
+      <div class="panel-header">
+        <h2 class="panel-title">New Analysis</h2>
+        <span class="panel-tag">v3.0</span>
+      </div>
+
+      <!-- Project Identity -->
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Project Identity</legend>
+
+        <div class="field">
+          <label class="label" for="projectName">Analysis Name <span class="required">*</span></label>
+          <input class="input" id="projectName" type="text"
+            placeholder="e.g. Ibuprofen vs COX-2 binding study"
+            maxlength="120" />
+          <span class="field-hint">A short title for this run — shown in reports</span>
+        </div>
+
+        <div class="field">
+          <label class="label" for="projectDesc">Description</label>
+          <textarea class="input textarea" id="projectDesc" rows="3"
+            placeholder="e.g. Investigating anti-inflammatory mechanism via COX-2 active site docking. Comparing poses from AutoDock Vina run #4."></textarea>
+          <span class="field-hint">Optional context — included in the synthesis report</span>
+        </div>
+      </fieldset>
+
+      <!-- Compound -->
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Compound</legend>
+
+        <div class="field-row">
+          <div class="field flex2">
+            <label class="label" for="compoundName">Compound Name</label>
+            <input class="input" id="compoundName" type="text"
+              placeholder="e.g. ibuprofen" />
+          </div>
+          <div class="field-or">OR</div>
+          <div class="field flex1">
+            <label class="label" for="cid">PubChem CID</label>
+            <input class="input" id="cid" type="number"
+              placeholder="e.g. 3672" min="1" />
+          </div>
+        </div>
+        <span class="field-hint">Provide compound name or PubChem CID — at least one required</span>
+      </fieldset>
+
+      <!-- Protein Target -->
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Protein Target</legend>
+
+        <div class="field">
+          <label class="label" for="pdbId">PDB Accession <span class="required">*</span></label>
+          <input class="input input-mono" id="pdbId" type="text"
+            placeholder="e.g. 1EQG"
+            maxlength="4" style="text-transform:uppercase" />
+          <span class="field-hint">4-character RCSB PDB ID. Look up at <a href="https://www.rcsb.org" target="_blank" rel="noopener" class="link">rcsb.org</a></span>
+        </div>
+      </fieldset>
+
+      <!-- Docking Results -->
+      <fieldset class="fieldset collapsible" id="dockingFieldset">
+        <legend class="fieldset-legend toggle-legend" id="dockingToggle">
+          Docking Results <span class="optional-tag">optional</span>
+          <span class="chevron" id="dockingChevron">▸</span>
+        </legend>
+        <div class="collapsible-body" id="dockingBody">
+          <div class="field">
+            <label class="label" for="dockingJson">Docking Data (JSON)</label>
+            <textarea class="input textarea input-mono" id="dockingJson" rows="5"
+              placeholder='{
+  "poses": [
+    { "rank": 1, "affinity_kcal_mol": -8.4, "rmsd": 0.0 },
+    { "rank": 2, "affinity_kcal_mol": -7.9, "rmsd": 1.2 }
+  ]
+}'></textarea>
+            <span class="field-hint">Paste AutoDock Vina, Glide, or SwissDock output as JSON</span>
+          </div>
+          <div class="field">
+            <label class="label" for="swissdockJson">SwissDock Results (JSON)</label>
+            <textarea class="input textarea input-mono" id="swissdockJson" rows="3"
+              placeholder='{ "clusters": [...] }'></textarea>
+          </div>
+          <div class="field">
+            <label class="label" for="pymolJson">PyMOL Session Data (JSON)</label>
+            <textarea class="input textarea input-mono" id="pymolJson" rows="3"
+              placeholder='{ "session": "..." }'></textarea>
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- Webhook URL -->
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">n8n Webhook</legend>
+        <div class="field">
+          <label class="label" for="webhookUrl">Webhook URL <span class="required">*</span></label>
+          <input class="input input-mono" id="webhookUrl" type="url"
+            placeholder="https://your-n8n.com/webhook/biocore-analyze" />
+          <span class="field-hint">Your n8n webhook endpoint. Saved in browser for next time.</span>
+        </div>
+      </fieldset>
+
+      <!-- Submit -->
+      <div class="submit-row">
+        <button class="btn-run" id="btnRun" onclick="runAnalysis()">
+          <span class="btn-icon">⬡</span>
+          Run BioCore Analysis
+        </button>
+        <button class="btn-clear" id="btnClear" onclick="clearForm()">Clear</button>
+      </div>
+
+    </section>
+
+    <!-- RIGHT PANEL: Output -->
+    <section class="panel panel-output" aria-label="Analysis output">
+
+      <div class="panel-header">
+        <h2 class="panel-title">Report</h2>
+        <div class="output-actions" id="outputActions" style="display:none">
+          <button class="btn-copy" onclick="copyReport()">Copy</button>
+          <button class="btn-download" onclick="downloadReport()">Download .md</button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">⬡</div>
+        <p class="empty-title">No analysis yet</p>
+        <p class="empty-sub">Fill in the form and click<br><strong>Run BioCore Analysis</strong></p>
+        <div class="empty-steps">
+          <div class="step"><span>1</span> Compound Profiling</div>
+          <div class="step"><span>2</span> Protein Target Profiling</div>
+          <div class="step"><span>3</span> Docking Result Analysis</div>
+          <div class="step"><span>4</span> Interaction Mechanism</div>
+          <div class="step"><span>5</span> Theoretical → Practical</div>
+          <div class="step"><span>6</span> PyMOL Visualization</div>
+          <div class="step"><span>7</span> Synthesis Report</div>
+        </div>
+      </div>
+
+      <!-- Loading state -->
+      <div class="loading-state" id="loadingState" style="display:none">
+        <div class="loader-ring"></div>
+        <p class="loading-title">Running BioCore Analysis</p>
+        <div class="loading-steps" id="loadingSteps">
+          <div class="lstep active" id="ls1">Fetching PubChem data…</div>
+          <div class="lstep" id="ls2">Fetching RCSB PDB data…</div>
+          <div class="lstep" id="ls3">Running 7-step AI analysis…</div>
+          <div class="lstep" id="ls4">Generating report…</div>
+        </div>
+      </div>
+
+      <!-- Result state -->
+      <div class="result-state" id="resultState" style="display:none">
+        <div class="result-meta" id="resultMeta"></div>
+        <div class="result-body" id="resultBody"></div>
+      </div>
+
+      <!-- Error state -->
+      <div class="error-state" id="errorState" style="display:none">
+        <div class="error-icon">✕</div>
+        <p class="error-title">Analysis Failed</p>
+        <p class="error-msg" id="errorMsg"></p>
+        <button class="btn-retry" onclick="runAnalysis()">Retry</button>
+      </div>
+
+    </section>
+
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

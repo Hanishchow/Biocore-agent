@@ -1,0 +1,211 @@
+{
+  "name": "BioCore — Biochemistry & Biophysics Analysis Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "biocore-analyze",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-01",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst compound_name = body.compound_name || null;\nconst cid = body.cid ? String(body.cid) : '';\nconst pdb_id = (body.pdb_id || '').toUpperCase().trim();\nconst docking_results = body.docking_results || null;\nconst swissdock_results = body.swissdock_results || null;\nconst pymol_data = body.pymol_data || null;\nconst errors = [];\nif (!compound_name && !cid) errors.push({ field: 'compound_name or cid', fix: 'Provide compound_name or cid in POST body' });\nif (!pdb_id || pdb_id.length !== 4) errors.push({ field: 'pdb_id', fix: 'Provide a valid 4-character PDB accession e.g. 1EQG' });\nif (errors.length > 0) return [{ json: { _error: true, errors, message: 'Validation failed' } }];\nreturn [{ json: { _error: false, compound_name, cid, pdb_id, docking_results, swissdock_results, pymol_data } }];"
+      },
+      "id": "node-02",
+      "name": "Input Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-01",
+              "leftValue": "={{ $json._error }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-03",
+      "name": "Has Validation Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: true, errors: $json.errors, message: $json.message }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "node-04",
+      "name": "Return Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 120]
+    },
+    {
+      "parameters": {
+        "url": "=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/{{ $json.cid ? 'cid/' + $json.cid : 'name/' + encodeURIComponent($json.compound_name) }}/property/IUPACName,MolecularFormula,MolecularWeight,ExactMass,CanonicalSMILES,InChI,InChIKey,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount,HeavyAtomCount,Charge,Complexity/JSON",
+        "authentication": "none",
+        "options": {
+          "timeout": 20000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "node-05",
+      "name": "Fetch PubChem",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://data.rcsb.org/rest/v1/core/entry/{{ $('Input Validator').first().json.pdb_id }}",
+        "authentication": "none",
+        "options": {
+          "timeout": 20000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "node-06",
+      "name": "Fetch PDB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 460]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "node-07",
+      "name": "Merge PubChem and PDB",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [880, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst pubraw = items[0] ? items[0].json : {};\nconst pdbraw = items[1] ? items[1].json : {};\nconst inputData = $('Input Validator').first().json;\n\n// Normalize PubChem\nlet compound = { _error: 'PubChem returned no data' };\nif (pubraw.PropertyTable && pubraw.PropertyTable.Properties && pubraw.PropertyTable.Properties.length > 0) {\n  const p = pubraw.PropertyTable.Properties[0];\n  compound = {\n    cid: p.CID ?? null,\n    iupac_name: p.IUPACName ?? 'N/A',\n    molecular_formula: p.MolecularFormula ?? 'N/A',\n    molecular_weight: p.MolecularWeight ?? null,\n    exact_mass: p.ExactMass ?? null,\n    canonical_smiles: p.CanonicalSMILES ?? 'N/A',\n    inchi: p.InChI ?? 'N/A',\n    inchikey: p.InChIKey ?? 'N/A',\n    xlogp3: p.XLogP ?? null,\n    tpsa: p.TPSA ?? null,\n    hb_donors: p.HBondDonorCount ?? null,\n    hb_acceptors: p.HBondAcceptorCount ?? null,\n    rotatable_bonds: p.RotatableBondCount ?? null,\n    heavy_atoms: p.HeavyAtomCount ?? null,\n    charge: p.Charge ?? null\n  };\n}\n\n// Normalize PDB\nlet target = { _error: 'PDB returned no data for ' + inputData.pdb_id };\nif (pdbraw && pdbraw.struct) {\n  const info = pdbraw.rcsb_entry_info || {};\n  const exptl = (pdbraw.exptl || [])[0] || {};\n  const refine = (pdbraw.refine || [])[0] || {};\n  const struct = pdbraw.struct || {};\n  const resolution = info.resolution_combined ? info.resolution_combined[0] : (refine.ls_d_res_high || null);\n  target = {\n    pdb_id: inputData.pdb_id,\n    title: struct.title || 'N/A',\n    method: exptl.method || info.experimental_method || 'N/A',\n    resolution_angstrom: resolution,\n    resolution_quality: !resolution ? 'unknown' : resolution < 2.0 ? 'excellent' : resolution < 2.5 ? 'good' : resolution < 3.0 ? 'moderate' : 'limited',\n    r_free: refine.ls_rfactor_rfree || null,\n    polymer_chains: info.polymer_entity_count || null,\n    has_ligand: (info.nonpolymer_entity_count || 0) > 0,\n    deposited_atoms: info.deposited_atom_count || null\n  };\n}\n\nconst payload = {\n  compound,\n  target,\n  docking: inputData.docking_results || null,\n  swissdock: inputData.swissdock_results || null,\n  pymol: inputData.pymol_data || null\n};\n\nconst systemPrompt = 'You are BioCore, a specialized biochemistry and biophysics AI agent. Execute the full 7-step analysis protocol on every payload.\\n\\nSTEP 1 - COMPOUND PROFILING: Extract IUPAC name, CID, molecular formula, MW, exact mass, SMILES, InChI, XLogP3, TPSA, HBD/HBA counts, rotatable bonds, heavy atom count, formal charge. Evaluate Lipinski Ro5, Veber rules, Ghose filter. Identify functional groups. Predict solubility class. Flag ADMET concerns.\\n\\nSTEP 2 - PROTEIN TARGET PROFILING: Extract PDB ID, protein name, organism, resolution in Angstroms, experimental method, R-free. Classify resolution quality. Identify protein family. Note disease associations. Flag co-crystallized ligands.\\n\\nSTEP 3 - DOCKING RESULT ANALYSIS: For each pose report affinity in kcal/mol, rank, RMSD. Classify: below -10 very strong, -7 to -10 strong, -5 to -7 moderate, above -5 weak. Compute Kd via deltaG = RT ln(Kd). Predict interaction types.\\n\\nSTEP 4 - INTERACTION MECHANISM: Describe bonding events, conformational changes, reversible vs covalent binding, functional effect. Model thermodynamic landscape. Predict pH effects.\\n\\nSTEP 5 - THEORETICAL TO PRACTICAL BRIDGE: Estimate IC50 from Kd. Predict cell permeability from TPSA and logP. Flag CYP450 liabilities. Recommend validation technique.\\n\\nSTEP 6 - PYMOL VISUALIZATION: Provide exact PyMOL commands. Surface representation, residue labels, color scheme: receptor grey cartoon, ligand element-colored sticks, H-bonds yellow dashes.\\n\\nSTEP 7 - SYNTHESIS REPORT with sections: [COMPOUND SUMMARY] [TARGET SUMMARY] [DOCKING VERDICT] [MECHANISTIC ANALYSIS] [THEORETICAL TO PRACTICAL TRANSLATION] [LIMITATIONS AND CAVEATS] [RECOMMENDED NEXT STEPS]\\n\\nRules: Never hallucinate data not in the payload. Quantify everything. Use markdown headers and bold for critical values. Begin STEP 1 immediately with no preamble.';\n\nconst userMessage = 'BIOCORE ANALYSIS PAYLOAD:\\n\\n' + JSON.stringify(payload, null, 2) + '\\n\\nExecute Steps 1 through 7 in full.';\n\nconst nvidiaBodyString = JSON.stringify({\n  model: 'NVIDIABuild-Autogen-12',\n  temperature: 0.1,\n  max_tokens: 4096,\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userMessage }\n  ]\n});\n\nreturn [{ json: { nvidiaBodyString, compound_queried: inputData.compound_name || inputData.cid, pdb_id_queried: inputData.pdb_id } }];"
+      },
+      "id": "node-08",
+      "name": "Assemble BioCore Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 380]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_NVIDIA_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "string",
+        "body": "={{ $json.nvidiaBodyString }}",
+        "options": { "timeout": 120000 }
+      },
+      "id": "node-09",
+      "name": "BioCore AI Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst meta = $('Assemble BioCore Payload').first().json;\n\nlet report = '';\nif (raw.choices && raw.choices.length > 0) {\n  report = raw.choices[0].message.content;\n} else if (raw.error) {\n  report = 'NVIDIA API Error: ' + JSON.stringify(raw.error);\n} else {\n  report = JSON.stringify(raw, null, 2);\n}\n\nreturn [{ json: {\n  status: 'success',\n  meta: {\n    compound_queried: meta.compound_queried,\n    pdb_id_queried: meta.pdb_id_queried,\n    model_used: raw.model || 'NVIDIABuild-Autogen-12',\n    tokens_used: raw.usage || null\n  },\n  report\n} }];"
+      },
+      "id": "node-10",
+      "name": "Format Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "node-11",
+      "name": "Return BioCore Report",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1760, 380]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Input Validator", "type": "main", "index": 0 }]]
+    },
+    "Input Validator": {
+      "main": [[{ "node": "Has Validation Error?", "type": "main", "index": 0 }]]
+    },
+    "Has Validation Error?": {
+      "main": [
+        [{ "node": "Return Validation Error", "type": "main", "index": 0 }],
+        [
+          { "node": "Fetch PubChem", "type": "main", "index": 0 },
+          { "node": "Fetch PDB", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch PubChem": {
+      "main": [[{ "node": "Merge PubChem and PDB", "type": "main", "index": 0 }]]
+    },
+    "Fetch PDB": {
+      "main": [[{ "node": "Merge PubChem and PDB", "type": "main", "index": 1 }]]
+    },
+    "Merge PubChem and PDB": {
+      "main": [[{ "node": "Assemble BioCore Payload", "type": "main", "index": 0 }]]
+    },
+    "Assemble BioCore Payload": {
+      "main": [[{ "node": "BioCore AI Agent", "type": "main", "index": 0 }]]
+    },
+    "BioCore AI Agent": {
+      "main": [[{ "node": "Format Report", "type": "main", "index": 0 }]]
+    },
+    "Format Report": {
+      "main": [[{ "node": "Return BioCore Report", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": ["biocore", "biochemistry", "biophysics", "pubchem", "pdb", "nvidia"],
+  "triggerCount": 1,
+  "updatedAt": "2026-02-25T00:00:00.000Z",
+  "versionId": "biocore-v3.0"
+}
